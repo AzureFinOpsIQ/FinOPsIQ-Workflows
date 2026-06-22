@@ -38,10 +38,6 @@ permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: terraform-dev
-  cancel-in-progress: false
-
 env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"

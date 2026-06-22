@@ -28,10 +28,6 @@ permissions:
   id-token: write
   actions: write
 
-concurrency:
-  group: terraform-backend-bootstrap
-  cancel-in-progress: false
-
 env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
