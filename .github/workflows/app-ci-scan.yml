@@ -213,9 +213,30 @@ jobs:
         if: matrix.type == 'node'
         working-directory: ${{ matrix.path }}
         run: |
+          set -euo pipefail
           npm ci
           npm run lint
-          npm test
+
+          has_test_script="$(node -e "const pkg=require('./package.json'); process.stdout.write(pkg.scripts && pkg.scripts.test ? 'true' : 'false')")"
+
+          if [ "$has_test_script" = "true" ]; then
+            npm test
+            test_stage="Executed"
+          else
+            echo "No frontend tests configured. Skipping test stage."
+            test_stage="Skipped"
+          fi
+
+          {
+            echo "### Frontend validation - ${{ matrix.service }}"
+            echo ""
+            if [ "$has_test_script" = "true" ]; then
+              echo "- Frontend tests detected: Yes"
+            else
+              echo "- Frontend tests detected: No"
+            fi
+            echo "- Test stage executed: ${test_stage}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Python
         if: matrix.type == 'python'
