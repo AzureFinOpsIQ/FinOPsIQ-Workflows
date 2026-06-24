@@ -241,17 +241,47 @@ jobs:
           pip install -r requirements/services/base.txt
           pip install ./shared-lib
           if [ "${{ matrix.service }}" != "shared-lib" ]; then pip install -r ${{ matrix.manifest }}; fi
-          pip install ruff pytest
+          pip install ruff pytest pytest-cov
           if [ "${{ matrix.service }}" = "shared-lib" ]; then
             lint_paths="shared-lib/shared_lib"
             test_path="shared-lib/tests"
+            cov_source="shared-lib/shared_lib"
           else
             lint_paths="${{ matrix.path }}/src shared-lib/shared_lib"
             test_path="${{ matrix.path }}/tests"
+            cov_source="${{ matrix.path }}/src"
           fi
           if [ -d "$test_path" ]; then lint_paths="$lint_paths $test_path"; fi
           ruff check $lint_paths
-          if [ -d "$test_path" ] && find "$test_path" -name 'test_*.py' -print -quit | grep -q .; then pytest "$test_path" -q; fi
+          coverage_file="coverage-${{ matrix.service }}.xml"
+          if [ -d "$test_path" ] && find "$test_path" -name 'test_*.py' -print -quit | grep -q .; then
+            pytest "$test_path" -q \
+              --cov="$cov_source" \
+              --cov-report="term-missing" \
+              --cov-report="xml:${coverage_file}"
+          else
+            echo "No Python tests found for ${{ matrix.service }}. Coverage file will not be generated."
+          fi
+          echo ""
+          echo "Generated coverage files:"
+          find . -maxdepth 2 -name 'coverage-*.xml' -type f -print -exec ls -lh {} \;
+          {
+            echo "### Python coverage - ${{ matrix.service }}"
+            echo ""
+            if [ -f "${coverage_file}" ]; then
+              echo "- coverage.xml location: ${coverage_file}"
+            else
+              echo "- coverage.xml location: not generated"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Python coverage
+        if: matrix.type == 'python'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}
+          path: coverage-${{ matrix.service }}.xml
+          if-no-files-found: warn
 
       - name: Slack notification - Lint/Test failed
         if: failure()
@@ -315,6 +345,37 @@ jobs:
             echo "- Scope: whole FinOpsIQ-SaaS repository service source roots"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Download Python coverage reports
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage-reports
+          merge-multiple: true
+
+      - name: Resolve coverage report paths
+        id: coverage_reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Coverage files available to SonarCloud:"
+          find coverage-reports -name 'coverage-*.xml' -type f -print -exec ls -lh {} \; || true
+          reports="$(find coverage-reports -name 'coverage-*.xml' -type f | sort | paste -sd, -)"
+          echo "paths=${reports}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### SonarCloud coverage inputs"
+            echo ""
+            if [ -n "$reports" ]; then
+              echo "- sonar.python.coverage.reportPaths: $reports"
+              echo ""
+              echo '```'
+              find coverage-reports -name 'coverage-*.xml' -type f | sort
+              echo '```'
+            else
+              echo "- sonar.python.coverage.reportPaths: no reports found"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run SonarCloud scan and wait for Quality Gate
         uses: SonarSource/sonarqube-scan-action@v5
         env:
@@ -325,6 +386,8 @@ jobs:
             -Dsonar.projectKey=${{ steps.sonar_project.outputs.project_key }}
             -Dsonar.projectName=${{ github.event.repository.name }}
             -Dsonar.sources=frontend/src,api-gateway/src/src,auth-service/src/src,collection-service/src/src,processing-service/src/src,ai-service/src/src,notification-service/src/src,shared-lib/shared_lib
+            -Dsonar.tests=api-gateway/tests,auth-service/tests,collection-service/tests,processing-service/tests,ai-service/tests,notification-service/tests,shared-lib/tests
+            -Dsonar.python.coverage.reportPaths=${{ steps.coverage_reports.outputs.paths }}
             -Dsonar.exclusions=**/node_modules/**,**/.next/**,**/__pycache__/**,**/.pytest_cache/**,**/.ruff_cache/**,**/shared-lib/**/tests/**,**/tests/mock_data/**
             -Dsonar.qualitygate.wait=true
 
